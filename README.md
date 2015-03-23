@@ -9,3 +9,5 @@ The script generates a .aef file from an adequately formatted .xlsx. The .xlsx m
 If you happen to have the weird habit of expecting money for work (as most sane people would) and this helps you saving some, please thank Andrea Gelmini - he is the crazy geek who convinced me to release this ugly thing, with the help of my archivist friend (Ivan Faiferri) who was supposed to make money out of it as well. Yeah. So please, send some money to Gelma at least, or maybe a "My little Unix - Kernel is magic!" T-shirt. Hence the license.
 
 Of course, this readme is gratuitous trolling (hi Gelma!). Please enjoy and check back for updates. :)
+
+If you fork this, be sure to *read the license and behave accordingly*. 
