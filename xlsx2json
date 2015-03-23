@@ -1,0 +1,299 @@
+# -*- coding: utf-8 -*-
+
+# xlsx2json.py - convert sesamo-derived files to archimista-compatible 
+# json-like files.
+#    Copyright (C) 2015 Matteo Tiberti <matteo.tiberti@gmail.com>
+
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the Rompicazzo GNU General Public License. 
+#    This is the same as the GNU General Public License, as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version, with one additional clause.
+#    Any work derived from this software MUST print in the standard output
+#    (or similar output stream) as the FIRST output lines
+#    of the program the following sentence: "IL GELMA E' UN PUZZONE", 
+#    possibly highlighted in some way.
+#    The message containing this print MUST be visible to the user for at least
+#    one second in the program output. If the software does
+#    not print to a terminal, the use of interface elements to display
+#    the text is mandatory.
+
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+import openpyxl as oxl
+import codecs
+import json
+import hashlib
+import datetime
+import zipfile
+import argparse
+import logging
+
+from collections import OrderedDict
+from sys import stdout
+
+# Fix json in order to support fucked up """"JSON"""" Archimista format
+# by overriding _make_iterencode. Fuck that shit 
+
+class ArchimistaJSONEncoder(json.JSONEncoder):
+
+	def default(self, o):
+		if o == 'true':
+			return [True]
+		if o == 'false':
+			return [False]
+		if o == 'null':
+			return [None]
+		return json.JSONEncoder.default(self, o)
+
+"""
+	def _make_iterencode(markers, _default, _encoder, _indent, _floatstr,
+	        _key_separator, _item_separator, _sort_keys, _skipkeys, _one_shot,
+	        ValueError=ValueError,
+	        basestring=basestring,
+	        dict=dict,
+	        float=float,
+	        id=id,
+	        int=int,
+	        isinstance=isinstance,
+	        list=list,
+	        long=long,
+	        str=str,
+	        tuple=tuple,
+	):
+
+	    def _iterencode_list(lst, _current_indent_level):
+	        if not lst:
+	            yield '[]'
+	            return
+	        if markers is not None:
+	            markerid = id(lst)
+	            if markerid in markers:
+	                raise ValueError("Circular reference detected")
+	            markers[markerid] = lst
+	        buf = '['
+	        if _indent is not None:
+	            _current_indent_level += 1
+	            newline_indent = '\n' + (' ' * (_indent * _current_indent_level))
+	            separator = _item_separator + newline_indent
+	            buf += newline_indent
+	        else:
+	            newline_indent = None
+	            separator = _item_separator
+	        first = True
+	        for value in lst:
+	            if first:
+	                first = False
+	            else:
+	                buf = separator
+	            if isinstance(value, basestring): # This is where the magic happens
+	            	print value.strip().lower()
+	            	if value.strip().lower() == 'true':
+	            		print "VERO", value
+	            		yield buf + 'true'
+	            	elif value.strip().lower() == 'false':
+	            		yield buf + 'false'
+	            	elif value.strip().lower() == 'null':
+	            		yield buf + 'null'
+	            	else:
+	                	yield buf + _encoder(value)
+	            elif value is None:
+	                yield buf + 'null'
+	            elif value is True or value.strip() == 'true':
+	                yield buf + 'true'
+	            elif value is False or value.strip() == 'false':
+	                yield buf + 'false'
+	            elif isinstance(value, (int, long)):
+	                yield buf + str(value)
+	            elif isinstance(value, float):
+	                yield buf + _floatstr(value)
+	            else:
+	                yield buf
+	                if isinstance(value, (list, tuple)):
+	                    chunks = _iterencode_list(value, _current_indent_level)
+	                elif isinstance(value, dict):
+	                    chunks = _iterencode_dict(value, _current_indent_level)
+	                else:
+	                    chunks = _iterencode(value, _current_indent_level)
+	                for chunk in chunks:
+	                    yield chunk
+	        if newline_indent is not None:
+	            _current_indent_level -= 1
+	            yield '\n' + (' ' * (_indent * _current_indent_level))
+	        yield ']'
+	        if markers is not None:
+	            del markers[markerid]
+"""
+#stdout = codecs.getwriter(stdout.encoding)(stdout);
+
+def get_headers(ws):
+	headers = []
+	logging.debug("getting headers...")
+       	for cell in ws.rows[0]:
+		if cell.value != '':
+			headers.append(cell.value)
+
+	#logging.debug("HEADERS for %s: %s" %("asd", "\n".join(headers)))
+	logging.debug("done!")
+	return headers
+
+def empty_row(ws_name, row):
+	markers = {	"fond":1,
+			"unit":2,
+			"fond_event":0,
+			"unit_event":0	}
+
+	if row[markers[ws_name]].value == None or row[markers[ws_name]].value == "":
+		return True
+
+	return False		
+
+def archimista_now():
+	dt = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+	tz = datetime.datetime.now().strftime('%z') # let's to it this way now; may use a real tzinfo later
+	if not tz:
+		tz = "+0100" # Default to CET
+	return "%s%s:%s" % (dt, tz[0:3],tz[3:5])
+
+# Some variables for the metadata file
+#####
+mode = 'full'
+version = 121
+producer = 'i686-pc-mingw32'
+attached_entity = 'Fond'
+#####
+
+#Let's go !
+
+print """
+##########################
+#                        #
+#                        #
+# IL GELMA E' UN PUZZONE #
+#                        #
+#                        #
+##########################
+"""
+
+
+parser = argparse.ArgumentParser(description='Transform xlsx files derived from Sesamo databases to the Archimista "JSON" format.')
+
+parser.add_argument('-v','--verbose',dest='verbose',help="verbose mode", action='store_true', default=False)
+parser.add_argument('-d','--debug', dest='debug', help="debug mode", action='store_true', default=False)
+parser.add_argument('-o','--output', dest='outfile', help="output file name", default=None)
+parser.add_argument('infile', default=None)
+
+args = parser.parse_args()
+
+if args.outfile == None:
+	args.outfile = args.infile[0:-4]+"aef"
+
+if args.debug:
+	logging.basicConfig(level=logging.DEBUG)
+elif args.verbose:
+	logging.basicConfig(level=logging.INFO)
+else: 
+	logging.basicConfig(level=logging.WARNING)
+
+
+logging.debug("loading worksheet...")
+wb = oxl.load_workbook(filename = args.infile) 
+logging.debug("loaded worksheet")
+wss_names = wb.get_sheet_names()
+logging.debug("names are: %s" % ", ".join(wss_names))
+wss = dict ( zip(wss_names,  [wb.get_sheet_by_name(wss_names[i]) for i in range(len(wss_names))] ) )
+
+#print zip(wss_names, [get_headers(wss[i]) for i in wss_names])
+ws_headers = OrderedDict( zip(wss_names, [get_headers(wss[i]) for i in wss_names]) )
+
+outstr = ""
+
+# Write data file
+
+
+data = []
+for ws_name in wss_names:
+	logging.debug("Working on: sheet %s" % ws_name)
+	linen = 0
+	ws = wss[ws_name]
+	for row in ws.rows[1:]:
+		linen += 1
+		logging.debug("doing line %d" % linen)
+		if empty_row(ws_name, row):
+			continue
+		data = OrderedDict([(ws_name,OrderedDict())])
+		for i,ws_header in enumerate(ws_headers[ws_name]):
+			if row[i].is_date:
+				row[i].value = str(row[i].value)
+			elif row[i].value == "null":
+				row[i].value = None 
+			elif row[i].value == "true":
+				row[i].value = True
+			elif row[i].value == "false":
+				row[i].value = False
+
+			if isinstance(row[i].value, basestring):
+				#asd = row[i].value.decode('string_escape')
+
+				#data[-1][ws_name][ws_header] = row[i].value.decode('utf-8')
+				try:
+					data[ws_name][ws_header] = row[i].value.decode('unicode-escape')
+				except:
+					data[ws_name][ws_header] = row[i].value
+
+				#data[-1][ws_name][ws_header] = unicode(row[i].value)
+				#print "AA--", row[i].value
+				#print "  --", asd
+				#print "BB--", data[-1][ws_name][ws_header]
+				#data[-1][ws_name][ws_header] = row[i].value
+
+			else:
+				data[ws_name][ws_header] = row[i].value
+		
+	#for line in data:
+		outstr += "%s\r\n\r\n" % json.dumps(data, 
+											ensure_ascii = True, 
+											encoding="utf8", 
+											separators=(',', ':'), 
+											cls=ArchimistaJSONEncoder)
+logging.debug("Writing outfile")
+if args.debug:
+	outfh = codecs.open("out.json",mode='w',encoding='utf8')		
+	outfh.write(outstr)
+	outfh.close()
+
+# write metadata file
+
+m = hashlib.sha256()
+m.update(outstr)
+
+metadata = OrderedDict([('mode',mode),
+						('date',archimista_now()),
+						('checksum',m.hexdigest()),
+						('version',version),
+						('producer',producer),
+						('attached_entity',attached_entity)])
+
+mdstr = json.dumps(metadata, 
+					ensure_ascii = True, 
+					encoding="utf8", 
+					separators=(',', ':'), 
+					cls=ArchimistaJSONEncoder)
+
+if args.debug:
+	mdfh = open('metadata.json','w')
+	mdfh.write(mdstr)
+	mdfh.close()
+
+# write zip
+zipfh = zipfile.ZipFile(args.outfile,'w')
+zipfh.writestr('data.json',outstr)
+zipfh.writestr('metadata.json',mdstr)
+zipfh.close()
